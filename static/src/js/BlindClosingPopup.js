@@ -8,6 +8,7 @@ import { useAsyncLockedMethod } from "@point_of_sale/app/hooks/hooks";
 import { _t } from "@web/core/l10n/translation";
 import { parseFloat } from "@web/views/fields/parsers";
 import { Input } from "@point_of_sale/app/components/inputs/input/input";
+import { MoneyDetailsPopup } from "@point_of_sale/app/components/popups/money_details_popup/money_details_popup";
 import { patch } from "@web/core/utils/patch";
 import { ClosePosPopup } from "@point_of_sale/app/components/popups/closing_popup/closing_popup";
 
@@ -20,12 +21,32 @@ export class BlindClosingPopup extends Component {
         this.pos = usePos();
         this.dialog = useService("dialog");
         this.ui = useService("ui");
+        this.hardwareProxy = useService("hardware_proxy");
         this.state = useState({
-            manualCashInput: 0,
+            manualCashInput: "0",
             notes: "",
             loading: false,
         });
+        this.moneyDetails = null;
         this.confirm = useAsyncLockedMethod(this.confirm.bind(this));
+    }
+
+    async openDetailsPopup() {
+        const action = _t("Cash control - closing");
+        this.hardwareProxy.openCashbox(action);
+        this.dialog.add(MoneyDetailsPopup, {
+            moneyDetails: this.moneyDetails,
+            action: action,
+            getPayload: (payload) => {
+                const { total, moneyDetailsNotes, moneyDetails } = payload;
+                this.state.manualCashInput = this.env.utils.formatCurrency(total, false);
+                if (moneyDetailsNotes) {
+                    this.state.notes = moneyDetailsNotes;
+                }
+                this.moneyDetails = moneyDetails;
+            },
+            context: "Closing",
+        });
     }
 
     async confirm() {
@@ -48,11 +69,12 @@ export class BlindClosingPopup extends Component {
             }
 
             if (this.pos.config.cash_control) {
+                const countedCash = this.env.utils.parseValidFloat(this.state.manualCashInput);
                 const response = await this.pos.data.call(
                     "pos.session",
                     "post_closing_cash_details",
                     [this.pos.session.id],
-                    { counted_cash: parseFloat(this.state.manualCashInput) }
+                    { counted_cash: countedCash }
                 );
                 if (!response.successful) {
                     this.state.loading = false;
@@ -81,18 +103,16 @@ export class BlindClosingPopup extends Component {
             this.pos.session.state = "closed";
             this.pos.router.close();
         } catch (error) {
-            await this.handleClosingControlError();
+            console.error("Blind closing session failed:", error);
+            const msg = error?.message || error?.data?.message || error?.data?.debug || _t("An error has occurred when trying to close the session.");
+            this.dialog.add(Dialog, {
+                title: _t("Closing session error"),
+                body: msg,
+            });
         } finally {
             this.state.loading = false;
             localStorage.removeItem(`pos.session.${odoo.pos_config_id}`);
         }
-    }
-
-    async handleClosingControlError() {
-        this.dialog.add(Dialog, {
-            title: _t("Closing session error"),
-            body: _t("An error has occurred when trying to close the session."),
-        });
     }
 
     async handleClosingError(response) {
@@ -112,7 +132,6 @@ patch(ClosePosPopup.prototype, {
     async setup() {
         super.setup(...arguments);
         
-        // Check via RPC if blind closing is active for this config/user
         try {
             const status = await this.pos.data.call(
                 "pos.config",
@@ -121,12 +140,10 @@ patch(ClosePosPopup.prototype, {
             );
             
             if (status.blind_closing_active && !status.is_manager) {
-                // Close the original popup and open ours
                 this.props.close();
                 this.dialog.add(BlindClosingPopup);
             }
         } catch (e) {
-            // If RPC fails, continue with original popup
             console.warn("Blind closing status check failed:", e);
         }
     }

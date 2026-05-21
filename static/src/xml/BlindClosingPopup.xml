@@ -19,6 +19,9 @@
                         isValid.bind="env.utils.isValidFloat"
                         class="'w-100 fs-2'"
                         placeholder="'Introduzca el total de efectivo...'"/>
+                    <button class="icon fa fa-money btn btn-secondary"
+                        t-on-click="openDetailsPopup"
+                        title="Conteo detallado de billetes y monedas"/>
                 </div>
             </div>
 
