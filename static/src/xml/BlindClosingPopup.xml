@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <t t-name="cierre_caja_ciego.BlindClosingPopup">
+        <Dialog contentClass="'close-pos-popup'">
+            <t t-set-slot="header">
+                <div class="d-flex flex-grow-1 justify-content-between">
+                    <h4 class="align-middle my-1">Cierre de Caja Ciego</h4>
+                    <div class="total-orders fw-bolder align-middle my-1">
+                        Introduce el recuento de efectivo
+                    </div>
+                </div>
+            </t>
+
+            <div class="mb-3">
+                <label class="form-label">Recuento de Efectivo</label>
+                <div class="d-flex w-100 gap-2 mt-1">
+                    <Input tModel="[state, 'manualCashInput']"
+                        isValid.bind="env.utils.isValidFloat"
+                        class="'w-100 fs-2'"
+                        placeholder="'Introduzca el total de efectivo...'"/>
+                </div>
+            </div>
+
+            <t t-set-slot="footer">
+                <div class="w-100 d-flex flex-wrap justify-content-between gap-2">
+                    <div class="d-flex gap-2">
+                        <button class="button highlight btn btn-primary btn-lg"
+                            t-att-disabled="state.loading || !env.utils.isValidFloat(state.manualCashInput)"
+                            t-on-click="confirm">
+                            <t t-if="state.loading">Cerrando...</t>
+                            <t t-else="">Cerrar Caja</t>
+                        </button>
+                        <button class="button btn btn-secondary btn-lg"
+                            t-on-click="cancel">
+                            Cancelar
+                        </button>
+                    </div>
+                </div>
+            </t>
+        </Dialog>
+    </t>
+
+</templates>
