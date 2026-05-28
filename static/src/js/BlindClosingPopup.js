@@ -12,6 +12,7 @@ import { PosStore } from "@point_of_sale/app/services/pos_store";
 import { ClosePosPopup } from "@point_of_sale/app/components/popups/closing_popup/closing_popup";
 import { ConnectionLostError } from "@web/core/network/rpc";
 import { handleSaleDetails } from "@point_of_sale/app/components/navbar/sale_details_button/sale_details_button";
+import { renderToElement } from "@web/core/utils/render";
 
 export class BlindClosingPopup extends Component {
     static components = { Dialog };
@@ -22,7 +23,6 @@ export class BlindClosingPopup extends Component {
         this.pos = usePos();
         this.dialog = useService("dialog");
         this.hardwareProxy = useService("hardware_proxy");
-        this.report = useService("report");
         this.state = useState({
             moneyCounted: false,
             countedTotal: 0,
@@ -114,11 +114,8 @@ export class BlindClosingPopup extends Component {
             }
             this.pos.session.state = "closed";
 
-            // Imprimir extracto del día: hardware proxy o PDF como fallback
-            const printed = await this.tryPrintSummary();
-            if (!printed) {
-                console.warn("Hardware printer unavailable, downloading PDF report instead.");
-            }
+            // Imprimir extracto del día (hardware proxy o browser print)
+            await this.tryPrintSummary();
 
             this.pos.router.close();
         } catch (error) {
@@ -152,31 +149,55 @@ export class BlindClosingPopup extends Component {
     }
 
     /**
-     * Intenta imprimir el extracto del día vía hardware proxy.
-     * Si no hay impresora POS conectada, descarga el PDF como fallback.
-     * @returns {Promise<boolean>} true si se imprimió, false si se descargó PDF
+     * Imprime el extracto del día.
+     * 1) Hardware proxy (impresora POS física) si está conectada
+     * 2) Browser print: renderiza el reporte HTML y abre el diálogo de impresión
      */
     async tryPrintSummary() {
-        // 1) Intentar impresión por hardware proxy (impresora POS)
+        const saleDetails = await this.pos.data.call(
+            "report.point_of_sale.report_saledetails",
+            "get_sale_details",
+            [false, false, false, [this.pos.session.id]]
+        );
+
+        // 1) Hardware proxy printer
         if (this.hardwareProxy.printer) {
             try {
                 await handleSaleDetails(this.pos, this.hardwareProxy, this.dialog);
-                return true;
+                return;
             } catch (printError) {
                 console.warn("POS printer failed:", printError);
             }
         }
 
-        // 2) Fallback: descargar PDF del reporte de ventas
+        // 2) Browser print: renderizar y abrir ventana
         try {
-            await this.report.doAction(
-                "point_of_sale.sale_details_report",
-                [this.pos.session.id]
+            const receiptEl = renderToElement(
+                "point_of_sale.SaleDetailsReport",
+                Object.assign({}, saleDetails, {
+                    date: new Date().toLocaleString(),
+                    pos: this.pos,
+                    formatCurrency: this.pos.env.utils.formatCurrency,
+                })
             );
-        } catch (pdfError) {
-            console.warn("PDF download also failed:", pdfError);
+
+            const printWindow = window.open("", "_blank", "width=800,height=600");
+            if (printWindow) {
+                printWindow.document.write(
+                    "<html><head><title>Extracto del Día</title>" +
+                    "<style>@media print { body { margin: 0; } }</style>" +
+                    "</head><body>"
+                );
+                printWindow.document.write(receiptEl.outerHTML);
+                printWindow.document.write("</body></html>");
+                printWindow.document.close();
+                printWindow.focus();
+                // Esperar a que cargue y abrir print
+                setTimeout(() => printWindow.print(), 500);
+            }
+        } catch (browserError) {
+            console.warn("Browser print fallback also failed:", browserError);
         }
-        return false;
     }
 }
 
