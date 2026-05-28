@@ -167,6 +167,7 @@ export class BlindClosingPopup extends Component {
         try {
             const session = this.pos.session;
             const fmt = this.pos.env.utils.formatCurrency;
+            const opening = session.cash_register_balance_start || 0;
             const orders = this.pos.models["pos.order"].filter(
                 (o) => o.session_id?.id === session.id && o.finalized
             );
@@ -182,6 +183,10 @@ export class BlindClosingPopup extends Component {
             }
 
             const totalAmount = orders.reduce((sum, o) => sum + (o.amount_total || 0), 0);
+            const countedCash = this.state.countedTotal || 0;
+            const cashInPayments = paymentTotals[session.name] || 0; // cash payments under session name
+            const expectedCash = opening + cashInPayments;
+            const difference = countedCash - expectedCash;
 
             // Construir HTML
             let html = `<html><head><title>Extracto - ${session.name}</title>`;
@@ -196,14 +201,21 @@ export class BlindClosingPopup extends Component {
                 .sep { border-top: 1px dashed #999; }
                 .total td { font-weight: bold; font-size: 15px; padding-top: 8px; }
                 .title-row td { font-weight: bold; padding-top: 10px; color: #333; }
-                .data-row td { padding-left: 10px; color: #555; }
                 .footer { text-align: center; color: #999; font-size: 10px; margin-top: 15px; }
+                .diff-pos { color: #28a745; }
+                .diff-neg { color: #dc3545; }
                 .note { font-size: 11px; color: #666; margin: 10px 0; padding: 8px; background: #f5f5f5; white-space: pre-wrap; }
             </style></head><body>`;
             html += `<h2>${session.name}</h2>`;
             html += `<div class="header">${now}<br/>${orders.length} pedido(s) · Cerrada</div>`;
 
-            // Pedidos
+            // Apertura de caja
+            html += `<table>`;
+            html += `<tr class="title-row"><td colspan="2">Apertura de Caja</td></tr>`;
+            html += `<tr><td class="label">Saldo inicial</td><td class="value">${fmt(opening, false)}</td></tr>`;
+            html += `</table>`;
+
+            // Pedidos (si hay)
             if (orders.length > 0) {
                 html += `<table>`;
                 html += `<tr class="title-row"><td colspan="2">Vendido</td></tr>`;
@@ -211,16 +223,17 @@ export class BlindClosingPopup extends Component {
                     html += `<tr><td class="label">${name}</td><td class="value">${fmt(paymentTotals[name], false)}</td></tr>`;
                 }
                 html += `<tr><td colspan="2" class="sep"></td></tr>`;
-                html += `<tr class="total"><td>Total</td><td class="value">${fmt(totalAmount, false)}</td></tr>`;
+                html += `<tr class="total"><td>Total vendido</td><td class="value">${fmt(totalAmount, false)}</td></tr>`;
                 html += `</table>`;
-            } else {
-                html += `<div style="text-align:center;color:#999;margin:15px 0;">Sin ventas en esta sesión</div>`;
             }
 
             // Conteo de cierre
             html += `<table>`;
-            html += `<tr class="title-row"><td colspan="2">Conteo de Cierre</td></tr>`;
-            html += `<tr><td class="label">Efectivo contado</td><td class="value">${fmt(this.state.countedTotal, false)}</td></tr>`;
+            html += `<tr class="title-row"><td colspan="2">Cierre de Caja</td></tr>`;
+            html += `<tr><td class="label">Efectivo esperado</td><td class="value">${fmt(expectedCash, false)}</td></tr>`;
+            html += `<tr><td class="label">Efectivo contado</td><td class="value">${fmt(countedCash, false)}</td></tr>`;
+            html += `<tr><td class="label">Diferencia</td>`;
+            html += `<td class="value ${difference >= 0 ? 'diff-pos' : 'diff-neg'}">${fmt(difference, false)}</td></tr>`;
             html += `</table>`;
 
             // Detalle del conteo (monedas/billetes)
