@@ -10,6 +10,7 @@ import { MoneyDetailsPopup } from "@point_of_sale/app/components/popups/money_de
 import { patch } from "@web/core/utils/patch";
 import { ClosePosPopup } from "@point_of_sale/app/components/popups/closing_popup/closing_popup";
 import { ConnectionLostError } from "@web/core/network/rpc";
+import { handleSaleDetails } from "@point_of_sale/app/components/navbar/sale_details_button/sale_details_button";
 
 export class BlindClosingPopup extends Component {
     static components = { Dialog };
@@ -110,6 +111,15 @@ export class BlindClosingPopup extends Component {
                 return this.handleClosingError(response);
             }
             this.pos.session.state = "closed";
+
+            // Imprimir automáticamente el extracto del día
+            try {
+                await handleSaleDetails(this.pos, this.hardwareProxy, this.dialog);
+            } catch (printError) {
+                console.warn("Could not print closing summary:", printError);
+                // No bloquear el cierre si falla la impresión
+            }
+
             this.pos.router.close();
         } catch (error) {
             if (error instanceof ConnectionLostError) {
