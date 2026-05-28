@@ -12,7 +12,6 @@ import { PosStore } from "@point_of_sale/app/services/pos_store";
 import { ClosePosPopup } from "@point_of_sale/app/components/popups/closing_popup/closing_popup";
 import { ConnectionLostError } from "@web/core/network/rpc";
 import { handleSaleDetails } from "@point_of_sale/app/components/navbar/sale_details_button/sale_details_button";
-import { renderToElement } from "@web/core/utils/render";
 
 export class BlindClosingPopup extends Component {
     static components = { Dialog };
@@ -153,53 +152,12 @@ export class BlindClosingPopup extends Component {
      * 1) Hardware proxy (impresora POS física) si está conectada
      * 2) Browser print: renderiza el reporte HTML y abre el diálogo de impresión
      */
+    /**
+     * Imprime el extracto del día con los datos locales del POS.
+     * 1) Hardware proxy (impresora POS física) si está conectada
+     * 2) Browser print: construye HTML con los datos de las órdenes locales
+     */
     async tryPrintSummary() {
-        const sessionId = this.pos.session.id;
-        console.log("--- BlindClosing DEBUG ---");
-        console.log("Session ID:", sessionId);
-        console.log("Session name:", this.pos.session.name);
-        console.log("Session state:", this.pos.session.state);
-
-        // Intentar por RPC directo (rpc service)
-        let saleDetails;
-        try {
-            const rpc = this.env.services?.rpc;
-            if (rpc) {
-                console.log("Using env.services.rpc");
-                saleDetails = await rpc("/web/dataset/call_kw", {
-                    model: "report.point_of_sale.report_saledetails",
-                    method: "get_sale_details",
-                    args: [false, false, false, [sessionId]],
-                    kwargs: {},
-                });
-            } else {
-                console.log("Fallback to pos.data.call");
-                saleDetails = await this.pos.data.call(
-                    "report.point_of_sale.report_saledetails",
-                    "get_sale_details",
-                    [false, false, false, [sessionId]]
-                );
-            }
-            console.log("get_sale_details result:", JSON.stringify(saleDetails, null, 2));
-        } catch (rpcError) {
-            console.error("RPC failed:", rpcError);
-            // Último intento: leer desde pos.order directamente
-            try {
-                console.log("Trying direct pos.order read...");
-                const rpc = this.env.services?.rpc;
-                const orders = await rpc("/web/dataset/search_read", {
-                    model: "pos.order",
-                    fields: ["id", "name", "amount_total", "state", "date_order"],
-                    domain: [["session_id", "=", sessionId]],
-                });
-                console.log("Direct orders result:", orders);
-                return;
-            } catch (finalError) {
-                console.error("All RPC methods failed:", finalError);
-                return;
-            }
-        }
-
         // 1) Hardware proxy printer
         if (this.hardwareProxy.printer) {
             try {
@@ -210,36 +168,73 @@ export class BlindClosingPopup extends Component {
             }
         }
 
-        // 2) Browser print: renderizar template + abrir ventana
+        // 2) Browser print: agregar datos desde los modelos locales del POS
         try {
-            const receiptEl = renderToElement(
-                "point_of_sale.SaleDetailsReport",
-                Object.assign({}, saleDetails, {
-                    date: new Date().toLocaleString(),
-                    pos: this.pos,
-                    formatCurrency: this.pos.env.utils.formatCurrency,
-                })
+            const session = this.pos.session;
+            const fmt = this.pos.env.utils.formatCurrency;
+            const orders = this.pos.models["pos.order"].filter(
+                (o) => o.session_id?.id === session.id && o.finalized
             );
+            const currency = this.pos.currency;
 
-            const printWindow = window.open("", "_blank", "width=800,height=600");
+            // Agrupar pagos por método
+            const paymentTotals = {};
+            for (const order of orders) {
+                for (const payment of order.payment_ids || []) {
+                    const methodName = payment.payment_method_id?.name || _t("Unknown");
+                    paymentTotals[methodName] = (paymentTotals[methodName] || 0) + (payment.amount || 0);
+                }
+            }
+
+            const totalAmount = orders.reduce((sum, o) => sum + (o.amount_total || 0), 0);
+            const now = new Date().toLocaleString();
+
+            // Construir HTML del resumen
+            let html = `<html><head><title>Extracto - ${session.name}</title>`;
+            html += `<style>
+                body { font-family: monospace; font-size: 13px; padding: 20px; max-width: 320px; margin: auto; }
+                h2 { text-align: center; margin-bottom: 5px; }
+                .header { text-align: center; color: #666; margin-bottom: 20px; font-size: 12px; }
+                table { width: 100%; border-collapse: collapse; }
+                td { padding: 3px 0; }
+                .label { text-align: left; }
+                .value { text-align: right; }
+                .sep { border-top: 1px dashed #999; }
+                .total td { font-weight: bold; font-size: 15px; padding-top: 8px; }
+                .title-row td { font-weight: bold; padding-top: 12px; color: #333; }
+                .footer { text-align: center; color: #999; font-size: 10px; margin-top: 20px; }
+            </style></head><body>`;
+            html += `<h2>${session.name}</h2>`;
+            html += `<div class="header">${now}<br/>`;
+            html += `${orders.length} pedido(s) · ${_t("Closed")}</div>`;
+
+            // Pagos por método
+            html += `<table>`;
+            html += `<tr class="title-row"><td colspan="2">${_t("Payments")}</td></tr>`;
+            const paymentNames = Object.keys(paymentTotals);
+            if (paymentNames.length === 0) {
+                html += `<tr><td class="label" colspan="2" style="color: #999;">${_t("No payments")}</td></tr>`;
+            } else {
+                for (const name of paymentNames) {
+                    html += `<tr><td class="label">${name}</td><td class="value">${fmt(paymentTotals[name], false)}</td></tr>`;
+                }
+            }
+
+            // Total
+            html += `<tr><td colspan="2" class="sep"></td></tr>`;
+            html += `<tr class="total"><td>${_t("Total")}</td><td class="value">${fmt(totalAmount, false)}</td></tr>`;
+            html += `</table>`;
+
+            // Info de cierre
+            if (this.state.notes) {
+                html += `<div class="footer">${_t("Closing note")}: ${this.state.notes}</div>`;
+            }
+            html += `<div class="footer">Sesión ID: ${session.id}</div>`;
+            html += `</body></html>`;
+
+            const printWindow = window.open("", "_blank", "width=380,height=500");
             if (printWindow) {
-                const debugInfo = [
-                    "Session: " + sessionId,
-                    "Orders: " + (saleDetails?.nbr_orders ?? "?"),
-                    "Payments: " + (saleDetails?.payments?.length ?? "?"),
-                ].join(" | ");
-
-                printWindow.document.write(
-                    "<html><head><title>Extracto del Día</title>" +
-                    "<style>@media print { body { margin: 0; } }" +
-                    ".debug-info { font-size: 10px; color: #999; text-align: center; margin-top: 20px; }</style>" +
-                    "</head><body>"
-                );
-                printWindow.document.write(receiptEl.outerHTML);
-                printWindow.document.write(
-                    '<div class="debug-info">' + debugInfo + '</div>'
-                );
-                printWindow.document.write("</body></html>");
+                printWindow.document.write(html);
                 printWindow.document.close();
                 printWindow.focus();
                 setTimeout(() => printWindow.print(), 500);
