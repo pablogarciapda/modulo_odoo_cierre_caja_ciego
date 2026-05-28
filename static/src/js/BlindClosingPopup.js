@@ -155,27 +155,49 @@ export class BlindClosingPopup extends Component {
      */
     async tryPrintSummary() {
         const sessionId = this.pos.session.id;
-        console.log("BlindClosing: fetching summary for session", sessionId);
+        console.log("--- BlindClosing DEBUG ---");
+        console.log("Session ID:", sessionId);
+        console.log("Session name:", this.pos.session.name);
+        console.log("Session state:", this.pos.session.state);
+
+        // Intentar por RPC directo (rpc service)
         let saleDetails;
         try {
-            saleDetails = await this.pos.data.call(
-                "report.point_of_sale.report_saledetails",
-                "get_sale_details",
-                [false, false, false, [sessionId]]
-            );
-            console.log("BlindClosing: sale details received", {
-                nbr_orders: saleDetails?.nbr_orders,
-                payments: saleDetails?.payments?.length,
-                products: saleDetails?.products?.length,
-                total: saleDetails?.currency?.total_paid,
-            });
+            const rpc = this.env.services?.rpc;
+            if (rpc) {
+                console.log("Using env.services.rpc");
+                saleDetails = await rpc("/web/dataset/call_kw", {
+                    model: "report.point_of_sale.report_saledetails",
+                    method: "get_sale_details",
+                    args: [false, false, false, [sessionId]],
+                    kwargs: {},
+                });
+            } else {
+                console.log("Fallback to pos.data.call");
+                saleDetails = await this.pos.data.call(
+                    "report.point_of_sale.report_saledetails",
+                    "get_sale_details",
+                    [false, false, false, [sessionId]]
+                );
+            }
+            console.log("get_sale_details result:", JSON.stringify(saleDetails, null, 2));
         } catch (rpcError) {
-            console.error("BlindClosing: RPC failed:", rpcError);
-            return;
-        }
-
-        if (!saleDetails || saleDetails.nbr_orders === 0) {
-            console.warn("BlindClosing: no orders found for session", sessionId);
+            console.error("RPC failed:", rpcError);
+            // Último intento: leer desde pos.order directamente
+            try {
+                console.log("Trying direct pos.order read...");
+                const rpc = this.env.services?.rpc;
+                const orders = await rpc("/web/dataset/search_read", {
+                    model: "pos.order",
+                    fields: ["id", "name", "amount_total", "state", "date_order"],
+                    domain: [["session_id", "=", sessionId]],
+                });
+                console.log("Direct orders result:", orders);
+                return;
+            } catch (finalError) {
+                console.error("All RPC methods failed:", finalError);
+                return;
+            }
         }
 
         // 1) Hardware proxy printer
