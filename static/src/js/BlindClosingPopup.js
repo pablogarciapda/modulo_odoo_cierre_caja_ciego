@@ -154,11 +154,29 @@ export class BlindClosingPopup extends Component {
      * 2) Browser print: renderiza el reporte HTML y abre el diálogo de impresión
      */
     async tryPrintSummary() {
-        const saleDetails = await this.pos.data.call(
-            "report.point_of_sale.report_saledetails",
-            "get_sale_details",
-            [false, false, false, [this.pos.session.id]]
-        );
+        const sessionId = this.pos.session.id;
+        console.log("BlindClosing: fetching summary for session", sessionId);
+        let saleDetails;
+        try {
+            saleDetails = await this.pos.data.call(
+                "report.point_of_sale.report_saledetails",
+                "get_sale_details",
+                [false, false, false, [sessionId]]
+            );
+            console.log("BlindClosing: sale details received", {
+                nbr_orders: saleDetails?.nbr_orders,
+                payments: saleDetails?.payments?.length,
+                products: saleDetails?.products?.length,
+                total: saleDetails?.currency?.total_paid,
+            });
+        } catch (rpcError) {
+            console.error("BlindClosing: RPC failed:", rpcError);
+            return;
+        }
+
+        if (!saleDetails || saleDetails.nbr_orders === 0) {
+            console.warn("BlindClosing: no orders found for session", sessionId);
+        }
 
         // 1) Hardware proxy printer
         if (this.hardwareProxy.printer) {
@@ -170,7 +188,7 @@ export class BlindClosingPopup extends Component {
             }
         }
 
-        // 2) Browser print: renderizar y abrir ventana
+        // 2) Browser print: renderizar template + abrir ventana
         try {
             const receiptEl = renderToElement(
                 "point_of_sale.SaleDetailsReport",
@@ -183,16 +201,25 @@ export class BlindClosingPopup extends Component {
 
             const printWindow = window.open("", "_blank", "width=800,height=600");
             if (printWindow) {
+                const debugInfo = [
+                    "Session: " + sessionId,
+                    "Orders: " + (saleDetails?.nbr_orders ?? "?"),
+                    "Payments: " + (saleDetails?.payments?.length ?? "?"),
+                ].join(" | ");
+
                 printWindow.document.write(
                     "<html><head><title>Extracto del Día</title>" +
-                    "<style>@media print { body { margin: 0; } }</style>" +
+                    "<style>@media print { body { margin: 0; } }" +
+                    ".debug-info { font-size: 10px; color: #999; text-align: center; margin-top: 20px; }</style>" +
                     "</head><body>"
                 );
                 printWindow.document.write(receiptEl.outerHTML);
+                printWindow.document.write(
+                    '<div class="debug-info">' + debugInfo + '</div>'
+                );
                 printWindow.document.write("</body></html>");
                 printWindow.document.close();
                 printWindow.focus();
-                // Esperar a que cargue y abrir print
                 setTimeout(() => printWindow.print(), 500);
             }
         } catch (browserError) {
