@@ -8,6 +8,7 @@ import { useAsyncLockedMethod } from "@point_of_sale/app/hooks/hooks";
 import { _t } from "@web/core/l10n/translation";
 import { MoneyDetailsPopup } from "@point_of_sale/app/components/popups/money_details_popup/money_details_popup";
 import { patch } from "@web/core/utils/patch";
+import { PosStore } from "@point_of_sale/app/services/pos_store";
 import { ClosePosPopup } from "@point_of_sale/app/components/popups/closing_popup/closing_popup";
 import { ConnectionLostError } from "@web/core/network/rpc";
 import { handleSaleDetails } from "@point_of_sale/app/components/navbar/sale_details_button/sale_details_button";
@@ -152,24 +153,30 @@ export class BlindClosingPopup extends Component {
     }
 }
 
-// Patch ClosePosPopup.setup para redirigir al popup ciego cuando corresponde
-patch(ClosePosPopup.prototype, {
-    async setup() {
-        super.setup(...arguments);
-
+// Patch PosStore.closeSession para abrir BlindClosingPopup DIRECTAMENTE
+// sin pasar por ClosePosPopup. Esto evita el flash del popup original
+// que se veía durante milisegundos en VPS con mayor latencia.
+patch(PosStore.prototype, {
+    async closeSession() {
         try {
-            const status = await this.pos.data.call(
+            const status = await this.data.call(
                 "pos.config",
                 "check_blind_closing_status",
-                [this.pos.config.id]
+                [this.config.id]
             );
 
             if (status.blind_closing_active && !status.is_manager) {
-                this.props.close();
                 this.dialog.add(BlindClosingPopup);
+                return;
             }
         } catch (e) {
-            console.warn("Blind closing status check failed:", e);
+            console.warn("Blind closing status check failed, using default flow:", e);
+        }
+
+        // Blind closing no activo o error: flujo normal
+        const info = await this.getClosePosInfo();
+        if (info) {
+            this.dialog.add(ClosePosPopup, info);
         }
     }
 });
