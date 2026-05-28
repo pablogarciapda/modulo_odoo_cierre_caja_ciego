@@ -6,32 +6,35 @@
             <t t-set-slot="header">
                 <div class="d-flex flex-grow-1 justify-content-between">
                     <h4 class="align-middle my-1">Cierre de Caja Ciego</h4>
-                    <div class="total-orders fw-bolder align-middle my-1">
-                        Introduce el recuento de efectivo
-                    </div>
                 </div>
             </t>
 
-            <div class="mb-3">
-                <label class="form-label">Recuento de Efectivo</label>
-                <div class="d-flex w-100 gap-2 mt-1">
-                    <Input tModel="[state, 'manualCashInput']"
-                        isValid.bind="env.utils.isValidFloat"
-                        class="'w-100 fs-2'"
-                        placeholder="'Introduzca el total de efectivo...'"/>
-                    <button class="icon fa fa-money btn btn-secondary"
-                        t-on-click="openDetailsPopup"
-                        title="Conteo detallado de billetes y monedas"/>
-                </div>
+            <div class="text-center mb-3">
+                <p class="text-muted mb-3">
+                    Conte los billetes y monedas para cerrar la caja.
+                </p>
+
+                <button class="btn btn-lg btn-outline-primary d-block mx-auto"
+                    t-on-click="openDetailsPopup"
+                    title="Conteo detallado de billetes y monedas"
+                    t-att-class="{'btn-primary text-white': state.moneyCounted, 'btn-outline-primary': !state.moneyCounted}">
+                    <i class="fa fa-money fa-2x d-block mb-1"></i>
+                    <t t-if="!state.moneyCounted">Conteo de Billetes y Monedas</t>
+                    <t t-else="">
+                        <i class="fa fa-check-circle"></i> Conteo realizado
+                    </t>
+                </button>
             </div>
 
             <t t-set-slot="footer">
                 <div class="w-100 d-flex flex-wrap justify-content-between gap-2">
                     <div class="d-flex gap-2">
                         <button class="button highlight btn btn-primary btn-lg"
-                            t-att-disabled="state.loading || !env.utils.isValidFloat(state.manualCashInput)"
+                            t-att-disabled="!canConfirm()"
                             t-on-click="confirm">
-                            <t t-if="state.loading">Cerrando...</t>
+                            <t t-if="state.loading">
+                                <i class="fa fa-spinner fa-spin"></i> Cerrando...
+                            </t>
                             <t t-else="">Cerrar Caja</t>
                         </button>
                         <button class="button btn btn-secondary btn-lg"

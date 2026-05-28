@@ -6,24 +6,23 @@ import { useService } from "@web/core/utils/hooks";
 import { usePos } from "@point_of_sale/app/hooks/pos_hook";
 import { useAsyncLockedMethod } from "@point_of_sale/app/hooks/hooks";
 import { _t } from "@web/core/l10n/translation";
-import { parseFloat } from "@web/views/fields/parsers";
-import { Input } from "@point_of_sale/app/components/inputs/input/input";
 import { MoneyDetailsPopup } from "@point_of_sale/app/components/popups/money_details_popup/money_details_popup";
 import { patch } from "@web/core/utils/patch";
 import { ClosePosPopup } from "@point_of_sale/app/components/popups/closing_popup/closing_popup";
+import { ConnectionLostError } from "@web/core/network/rpc";
 
 export class BlindClosingPopup extends Component {
-    static components = { Dialog, Input };
+    static components = { Dialog };
     static template = "cierre_caja_ciego.BlindClosingPopup";
     static props = ["close"];
 
     setup() {
         this.pos = usePos();
         this.dialog = useService("dialog");
-        this.ui = useService("ui");
         this.hardwareProxy = useService("hardware_proxy");
         this.state = useState({
-            manualCashInput: "0",
+            moneyCounted: false,
+            countedTotal: 0,
             notes: "",
             loading: false,
         });
@@ -31,6 +30,10 @@ export class BlindClosingPopup extends Component {
         this.confirm = useAsyncLockedMethod(this.confirm.bind(this));
     }
 
+    /**
+     * Abre el popup de conteo detallado de billetes y monedas.
+     * Esta es la ÚNICA forma de introducir el recuento — no hay campo de texto manual.
+     */
     async openDetailsPopup() {
         const action = _t("Cash control - closing");
         this.hardwareProxy.openCashbox(action);
@@ -39,7 +42,8 @@ export class BlindClosingPopup extends Component {
             action: action,
             getPayload: (payload) => {
                 const { total, moneyDetailsNotes, moneyDetails } = payload;
-                this.state.manualCashInput = this.env.utils.formatCurrency(total, false);
+                this.state.countedTotal = total;
+                this.state.moneyCounted = true;
                 if (moneyDetailsNotes) {
                     this.state.notes = moneyDetailsNotes;
                 }
@@ -49,14 +53,20 @@ export class BlindClosingPopup extends Component {
         });
     }
 
+    /**
+     * Verifica que el conteo detallado se haya realizado.
+     * "Cerrar Caja" solo se habilita DESPUÉS de contar billetes y monedas.
+     */
+    canConfirm() {
+        return this.state.moneyCounted && !this.state.loading;
+    }
+
+    /**
+     * Ejecuta la secuencia de cierre de sesión con el total contado.
+     * El total se calcula internamente desde MoneyDetailsPopup — nunca se muestra al usuario.
+     */
     async confirm() {
-        if (!this.env.utils.isValidFloat(this.state.manualCashInput)) {
-            this.dialog.add(Dialog, {
-                title: _t("Error"),
-                body: _t("Por favor, introduzca un importe válido."),
-            });
-            return;
-        }
+        if (!this.state.moneyCounted) return;
 
         this.state.loading = true;
 
@@ -69,12 +79,11 @@ export class BlindClosingPopup extends Component {
             }
 
             if (this.pos.config.cash_control) {
-                const countedCash = this.env.utils.parseValidFloat(this.state.manualCashInput);
                 const response = await this.pos.data.call(
                     "pos.session",
                     "post_closing_cash_details",
                     [this.pos.session.id],
-                    { counted_cash: countedCash }
+                    { counted_cash: this.state.countedTotal }
                 );
                 if (!response.successful) {
                     this.state.loading = false;
@@ -88,7 +97,7 @@ export class BlindClosingPopup extends Component {
                     this.state.notes,
                 ]);
             } catch (error) {
-                if (!error.data || error.data.message !== "This session is already closed.") throw error;
+                if (error?.data?.message !== "This session is already closed.") throw error;
             }
 
             const response = await this.pos.data.call(
@@ -103,8 +112,14 @@ export class BlindClosingPopup extends Component {
             this.pos.session.state = "closed";
             this.pos.router.close();
         } catch (error) {
+            if (error instanceof ConnectionLostError) {
+                throw error;
+            }
             console.error("Blind closing session failed:", error);
-            const msg = error?.message || error?.data?.message || error?.data?.debug || _t("An error has occurred when trying to close the session.");
+            const msg = error?.message
+                || error?.data?.message
+                || error?.data?.debug
+                || _t("An error has occurred when trying to close the session.");
             this.dialog.add(Dialog, {
                 title: _t("Closing session error"),
                 body: msg,
@@ -127,18 +142,18 @@ export class BlindClosingPopup extends Component {
     }
 }
 
-// Patch ClosePosPopup to redirect to our popup when blind closing is active
+// Patch ClosePosPopup.setup para redirigir al popup ciego cuando corresponde
 patch(ClosePosPopup.prototype, {
     async setup() {
         super.setup(...arguments);
-        
+
         try {
             const status = await this.pos.data.call(
                 "pos.config",
                 "check_blind_closing_status",
                 [this.pos.config.id]
             );
-            
+
             if (status.blind_closing_active && !status.is_manager) {
                 this.props.close();
                 this.dialog.add(BlindClosingPopup);
