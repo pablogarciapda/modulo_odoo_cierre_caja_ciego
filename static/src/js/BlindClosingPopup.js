@@ -150,12 +150,7 @@ export class BlindClosingPopup extends Component {
     /**
      * Imprime el extracto del día.
      * 1) Hardware proxy (impresora POS física) si está conectada
-     * 2) Browser print: renderiza el reporte HTML y abre el diálogo de impresión
-     */
-    /**
-     * Imprime el extracto del día con los datos locales del POS.
-     * 1) Hardware proxy (impresora POS física) si está conectada
-     * 2) Browser print: construye HTML con los datos de las órdenes locales
+     * 2) Browser print: construye HTML con datos locales + conteo de cierre
      */
     async tryPrintSummary() {
         // 1) Hardware proxy printer
@@ -168,14 +163,14 @@ export class BlindClosingPopup extends Component {
             }
         }
 
-        // 2) Browser print: agregar datos desde los modelos locales del POS
+        // 2) Browser print
         try {
             const session = this.pos.session;
             const fmt = this.pos.env.utils.formatCurrency;
             const orders = this.pos.models["pos.order"].filter(
                 (o) => o.session_id?.id === session.id && o.finalized
             );
-            const currency = this.pos.currency;
+            const now = new Date().toLocaleString();
 
             // Agrupar pagos por método
             const paymentTotals = {};
@@ -187,48 +182,52 @@ export class BlindClosingPopup extends Component {
             }
 
             const totalAmount = orders.reduce((sum, o) => sum + (o.amount_total || 0), 0);
-            const now = new Date().toLocaleString();
 
-            // Construir HTML del resumen
+            // Construir HTML
             let html = `<html><head><title>Extracto - ${session.name}</title>`;
             html += `<style>
                 body { font-family: monospace; font-size: 13px; padding: 20px; max-width: 320px; margin: auto; }
-                h2 { text-align: center; margin-bottom: 5px; }
-                .header { text-align: center; color: #666; margin-bottom: 20px; font-size: 12px; }
+                h2 { text-align: center; margin-bottom: 2px; }
+                .header { text-align: center; color: #666; margin-bottom: 15px; font-size: 12px; }
                 table { width: 100%; border-collapse: collapse; }
                 td { padding: 3px 0; }
                 .label { text-align: left; }
                 .value { text-align: right; }
                 .sep { border-top: 1px dashed #999; }
                 .total td { font-weight: bold; font-size: 15px; padding-top: 8px; }
-                .title-row td { font-weight: bold; padding-top: 12px; color: #333; }
-                .footer { text-align: center; color: #999; font-size: 10px; margin-top: 20px; }
+                .title-row td { font-weight: bold; padding-top: 10px; color: #333; }
+                .data-row td { padding-left: 10px; color: #555; }
+                .footer { text-align: center; color: #999; font-size: 10px; margin-top: 15px; }
+                .note { font-size: 11px; color: #666; margin: 10px 0; padding: 8px; background: #f5f5f5; white-space: pre-wrap; }
             </style></head><body>`;
             html += `<h2>${session.name}</h2>`;
-            html += `<div class="header">${now}<br/>`;
-            html += `${orders.length} pedido(s) · ${_t("Closed")}</div>`;
+            html += `<div class="header">${now}<br/>${orders.length} pedido(s) · Cerrada</div>`;
 
-            // Pagos por método
-            html += `<table>`;
-            html += `<tr class="title-row"><td colspan="2">${_t("Payments")}</td></tr>`;
-            const paymentNames = Object.keys(paymentTotals);
-            if (paymentNames.length === 0) {
-                html += `<tr><td class="label" colspan="2" style="color: #999;">${_t("No payments")}</td></tr>`;
-            } else {
-                for (const name of paymentNames) {
+            // Pedidos
+            if (orders.length > 0) {
+                html += `<table>`;
+                html += `<tr class="title-row"><td colspan="2">Vendido</td></tr>`;
+                for (const name of Object.keys(paymentTotals)) {
                     html += `<tr><td class="label">${name}</td><td class="value">${fmt(paymentTotals[name], false)}</td></tr>`;
                 }
+                html += `<tr><td colspan="2" class="sep"></td></tr>`;
+                html += `<tr class="total"><td>Total</td><td class="value">${fmt(totalAmount, false)}</td></tr>`;
+                html += `</table>`;
+            } else {
+                html += `<div style="text-align:center;color:#999;margin:15px 0;">Sin ventas en esta sesión</div>`;
             }
 
-            // Total
-            html += `<tr><td colspan="2" class="sep"></td></tr>`;
-            html += `<tr class="total"><td>${_t("Total")}</td><td class="value">${fmt(totalAmount, false)}</td></tr>`;
+            // Conteo de cierre
+            html += `<table>`;
+            html += `<tr class="title-row"><td colspan="2">Conteo de Cierre</td></tr>`;
+            html += `<tr><td class="label">Efectivo contado</td><td class="value">${fmt(this.state.countedTotal, false)}</td></tr>`;
             html += `</table>`;
 
-            // Info de cierre
+            // Detalle del conteo (monedas/billetes)
             if (this.state.notes) {
-                html += `<div class="footer">${_t("Closing note")}: ${this.state.notes}</div>`;
+                html += `<div class="note">${this.state.notes}</div>`;
             }
+
             html += `<div class="footer">Sesión ID: ${session.id}</div>`;
             html += `</body></html>`;
 
