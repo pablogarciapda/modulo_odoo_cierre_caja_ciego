@@ -22,6 +22,7 @@ export class BlindClosingPopup extends Component {
         this.pos = usePos();
         this.dialog = useService("dialog");
         this.hardwareProxy = useService("hardware_proxy");
+        this.report = useService("report");
         this.state = useState({
             moneyCounted: false,
             countedTotal: 0,
@@ -113,12 +114,10 @@ export class BlindClosingPopup extends Component {
             }
             this.pos.session.state = "closed";
 
-            // Imprimir automáticamente el extracto del día
-            try {
-                await handleSaleDetails(this.pos, this.hardwareProxy, this.dialog);
-            } catch (printError) {
-                console.warn("Could not print closing summary:", printError);
-                // No bloquear el cierre si falla la impresión
+            // Imprimir extracto del día: hardware proxy o PDF como fallback
+            const printed = await this.tryPrintSummary();
+            if (!printed) {
+                console.warn("Hardware printer unavailable, downloading PDF report instead.");
             }
 
             this.pos.router.close();
@@ -150,6 +149,34 @@ export class BlindClosingPopup extends Component {
 
     cancel() {
         this.props.close();
+    }
+
+    /**
+     * Intenta imprimir el extracto del día vía hardware proxy.
+     * Si no hay impresora POS conectada, descarga el PDF como fallback.
+     * @returns {Promise<boolean>} true si se imprimió, false si se descargó PDF
+     */
+    async tryPrintSummary() {
+        // 1) Intentar impresión por hardware proxy (impresora POS)
+        if (this.hardwareProxy.printer) {
+            try {
+                await handleSaleDetails(this.pos, this.hardwareProxy, this.dialog);
+                return true;
+            } catch (printError) {
+                console.warn("POS printer failed:", printError);
+            }
+        }
+
+        // 2) Fallback: descargar PDF del reporte de ventas
+        try {
+            await this.report.doAction(
+                "point_of_sale.sale_details_report",
+                [this.pos.session.id]
+            );
+        } catch (pdfError) {
+            console.warn("PDF download also failed:", pdfError);
+        }
+        return false;
     }
 }
 
