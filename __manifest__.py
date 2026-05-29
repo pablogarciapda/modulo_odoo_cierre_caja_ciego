@@ -5,7 +5,21 @@
     'website': 'https://github.com/pablogarciapda',
     'license': 'LGPL-3',
     'category': 'Point of Sale',
-    'summary': 'Implementa la funcionalidad de cierre de caja ciego en el TPV.',
+    'summary': 'Cierre de caja ciego: oculta totales y fuerza conteo manual.',
+    'description': """
+        Modifica el popup de cierre de caja del TPV para ocultar todos
+        los totales esperados y forzar un recuento manual a ciegas.
+        
+        Características:
+        - Al activar el check en configuración del TPV, al cerrar caja
+          no se ven movimientos ni cifras.
+        - El empleado cuenta billetes y monedas mediante el botón de
+          conteo detallado.
+        - Al cerrar, imprime automáticamente un extracto del día con
+          productos, pagos, impuestos y totales.
+        - Grupo "Manager de Cierre Ciego" para usuarios que sí pueden
+          ver los totales.
+    """,
     'depends': [
         'point_of_sale',
         'l10n_es',
